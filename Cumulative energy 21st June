@@ -1,0 +1,212 @@
+%% 21st June: cumulative energy for Oslo, Furnace Creek, and Pontianak
+
+modelName = "SP150";
+
+filename_oslo      = "oslo 21st jun AVERAGE.xlsx";
+filename_furnace   = "Furnace Creek 21st june AVERAGE.xlsx";
+filename_pontianak = "pontianak 21st jun AVERAGE.xlsx";
+
+
+% Fixed panel setting
+
+Ns = 72;
+assignin('base','Ns',Ns);
+assignin('base','Rsh',1e7);
+assignin('base','Eg0',1.12);
+
+
+% NOCT model
+
+NOCT_C = 45;
+
+% Oslo
+
+M = readmatrix(filename_oslo);
+
+G_day_oslo    = M(:,end-1);
+Tamb_day_oslo = M(:,end);
+
+ok = isfinite(G_day_oslo) & isfinite(Tamb_day_oslo);
+G_day_oslo    = G_day_oslo(ok);
+Tamb_day_oslo = Tamb_day_oslo(ok);
+
+n_oslo = min(length(G_day_oslo),24);
+G_day_oslo    = G_day_oslo(1:n_oslo);
+Tamb_day_oslo = Tamb_day_oslo(1:n_oslo);
+hours_oslo    = (0:n_oslo-1)';
+
+Tcell_C_oslo = Tamb_day_oslo + ((NOCT_C - 20)/800) .* G_day_oslo;
+
+Pmpp_day_oslo = zeros(n_oslo,1);
+
+for k = 1:n_oslo
+
+    G   = G_day_oslo(k);
+    T_C = Tcell_C_oslo(k);
+
+    if G <= 1e-6
+        Pmpp_day_oslo(k) = 0;
+        continue
+    end
+
+    assignin('base','G',G);
+    assignin('base','T',T_C + 273.15);
+
+    try
+        simOut = sim(modelName,'SrcWorkspace','base');
+
+        V = simOut.Vout;
+        I = simOut.Iout;
+        if isa(V,'timeseries'), V = V.Data; end
+        if isa(I,'timeseries'), I = I.Data; end
+        V = V(:);
+        I = I(:);
+        ok2 = isfinite(V) & isfinite(I);
+        V = V(ok2);
+        I = I(ok2);
+        if isempty(V) || isempty(I)
+            Pmpp_day_oslo(k) = 0;
+            continue
+        end
+        P = V .* I;
+        Pmpp_day_oslo(k) = max(P);
+        if ~isfinite(Pmpp_day_oslo(k)) || Pmpp_day_oslo(k) < 0
+            Pmpp_day_oslo(k) = 0;
+        end
+    catch ME
+        fprintf('Oslo simulation failed at hour %d: %s\n', hours_oslo(k), ME.message);
+        Pmpp_day_oslo(k) = 0;
+    end
+end
+Ecum_oslo = zeros(n_oslo,1);
+for k = 2:n_oslo
+    dt = hours_oslo(k) - hours_oslo(k-1);
+    Ecum_oslo(k) = Ecum_oslo(k-1) + 0.5 * (Pmpp_day_oslo(k-1) + Pmpp_day_oslo(k)) * dt;
+end
+
+% Furnace Creek
+
+M = readmatrix(filename_furnace);
+G_day_furnace    = M(:,end-1);
+Tamb_day_furnace = M(:,end);
+ok = isfinite(G_day_furnace) & isfinite(Tamb_day_furnace);
+G_day_furnace    = G_day_furnace(ok);
+Tamb_day_furnace = Tamb_day_furnace(ok);
+n_furnace = min(length(G_day_furnace),24);
+G_day_furnace    = G_day_furnace(1:n_furnace);
+Tamb_day_furnace = Tamb_day_furnace(1:n_furnace);
+hours_furnace    = (0:n_furnace-1)';
+Tcell_C_furnace = Tamb_day_furnace + ((NOCT_C - 20)/800) .* G_day_furnace;
+Pmpp_day_furnace = zeros(n_furnace,1);
+for k = 1:n_furnace
+    G   = G_day_furnace(k);
+    T_C = Tcell_C_furnace(k);
+    if G <= 1e-6
+        Pmpp_day_furnace(k) = 0;
+        continue
+    end
+    assignin('base','G',G);
+    assignin('base','T',T_C + 273.15);
+    try
+        simOut = sim(modelName,'SrcWorkspace','base');
+        V = simOut.Vout;
+        I = simOut.Iout;
+        if isa(V,'timeseries'), V = V.Data; end
+        if isa(I,'timeseries'), I = I.Data; end
+        V = V(:);
+        I = I(:);
+        ok2 = isfinite(V) & isfinite(I);
+        V = V(ok2);
+        I = I(ok2);
+        if isempty(V) || isempty(I)
+            Pmpp_day_furnace(k) = 0;
+            continue
+        end
+        P = V .* I;
+        Pmpp_day_furnace(k) = max(P);
+        if ~isfinite(Pmpp_day_furnace(k)) || Pmpp_day_furnace(k) < 0
+            Pmpp_day_furnace(k) = 0;
+        end
+    catch ME
+        fprintf('Furnace Creek simulation failed at hour %d: %s\n', hours_furnace(k), ME.message);
+        Pmpp_day_furnace(k) = 0;
+    end
+end
+Ecum_furnace = zeros(n_furnace,1);
+for k = 2:n_furnace
+    dt = hours_furnace(k) - hours_furnace(k-1);
+    Ecum_furnace(k) = Ecum_furnace(k-1) + 0.5 * (Pmpp_day_furnace(k-1) + Pmpp_day_furnace(k)) * dt;
+end
+
+% Pontiana
+
+M = readmatrix(filename_pontianak);
+G_day_pontianak    = M(:,end-1);
+Tamb_day_pontianak = M(:,end);
+ok = isfinite(G_day_pontianak) & isfinite(Tamb_day_pontianak);
+G_day_pontianak    = G_day_pontianak(ok);
+Tamb_day_pontianak = Tamb_day_pontianak(ok);
+n_pontianak = min(length(G_day_pontianak),24);
+G_day_pontianak    = G_day_pontianak(1:n_pontianak);
+Tamb_day_pontianak = Tamb_day_pontianak(1:n_pontianak);
+hours_pontianak    = (0:n_pontianak-1)';
+Tcell_C_pontianak = Tamb_day_pontianak + ((NOCT_C - 20)/800) .* G_day_pontianak;
+Pmpp_day_pontianak = zeros(n_pontianak,1);
+for k = 1:n_pontianak
+    G   = G_day_pontianak(k);
+    T_C = Tcell_C_pontianak(k);
+    if G <= 1e-6
+        Pmpp_day_pontianak(k) = 0;
+        continue
+    end
+    assignin('base','G',G);
+    assignin('base','T',T_C + 273.15);
+    try
+        simOut = sim(modelName,'SrcWorkspace','base');
+        V = simOut.Vout;
+        I = simOut.Iout;
+        if isa(V,'timeseries'), V = V.Data; end
+        if isa(I,'timeseries'), I = I.Data; end
+        V = V(:);
+        I = I(:);
+        ok2 = isfinite(V) & isfinite(I);
+        V = V(ok2);
+        I = I(ok2);
+        if isempty(V) || isempty(I)
+            Pmpp_day_pontianak(k) = 0;
+            continue
+        end
+        P = V .* I;
+        Pmpp_day_pontianak(k) = max(P);
+        if ~isfinite(Pmpp_day_pontianak(k)) || Pmpp_day_pontianak(k) < 0
+            Pmpp_day_pontianak(k) = 0;
+        end
+    catch ME
+        fprintf('Pontianak simulation failed at hour %d: %s\n', hours_pontianak(k), ME.message);
+        Pmpp_day_pontianak(k) = 0;
+    end
+end
+Ecum_pontianak = zeros(n_pontianak,1);
+for k = 2:n_pontianak
+    dt = hours_pontianak(k) - hours_pontianak(k-1);
+    Ecum_pontianak(k) = Ecum_pontianak(k-1) + 0.5 * (Pmpp_day_pontianak(k-1) + Pmpp_day_pontianak(k)) * dt;
+end
+
+% Print total daily energy
+
+fprintf('Oslo total daily energy = %.2f Wh\n', Ecum_oslo(end));
+fprintf('Furnace Creek total daily energy = %.2f Wh\n', Ecum_furnace(end));
+fprintf('Pontianak total daily energy = %.2f Wh\n', Ecum_pontianak(end));
+
+% Graph: Cumulative energy
+figure;
+plot(hours_oslo,      Ecum_oslo,      'o-', 'LineWidth', 2, 'MarkerSize', 7); hold on;
+plot(hours_furnace,   Ecum_furnace,   's-', 'LineWidth', 2, 'MarkerSize', 7);
+plot(hours_pontianak, Ecum_pontianak, '^-', 'LineWidth', 2, 'MarkerSize', 7);
+grid on;
+xlabel('Hour of day');
+ylabel('Cumulative energy (Wh)');
+title('SP150 Cumulative Energy Over Time - 21st June');
+legend('Oslo','Furnace Creek','Pontianak','Location','best');
+xlim([0 23]);
+ylim([0 max([Ecum_oslo; Ecum_furnace; Ecum_pontianak])*1.1]);
