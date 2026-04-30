@@ -1,0 +1,85 @@
+%% Cell Temp vs Time – 21st June (All Locations)
+
+
+% File names
+
+file_oslo      = "oslo 21st jun AVERAGE.xlsx";
+file_furnace   = "Furnace Creek 21st june AVERAGE.xlsx";
+file_pontianak = "pontianak 21st jun AVERAGE.xlsx";
+
+
+% NOCT model
+NOCT_C = 45;
+
+% Oslo
+M = readmatrix(file_oslo);
+
+G_oslo = M(:,end-1);   % irradiance
+T_oslo = M(:,end);     % ambient temp
+
+ok = isfinite(G_oslo) & isfinite(T_oslo);
+G_oslo = G_oslo(ok);
+T_oslo = T_oslo(ok);
+
+n_oslo = min(length(G_oslo), 24);
+G_oslo = G_oslo(1:n_oslo);
+T_oslo = T_oslo(1:n_oslo);
+hours_oslo = (0:n_oslo-1)';
+
+Tcell_oslo = T_oslo + ((NOCT_C - 20)/800) .* G_oslo;
+
+
+% Furnace Creek
+
+M = readmatrix(file_furnace);
+
+G_fc = M(:,end-1);
+T_fc = M(:,end);
+
+ok = isfinite(G_fc) & isfinite(T_fc);
+G_fc = G_fc(ok);
+T_fc = T_fc(ok);
+
+n_fc = min(length(G_fc), 24);
+G_fc = G_fc(1:n_fc);
+T_fc = T_fc(1:n_fc);
+hours_fc = (0:n_fc-1)';
+
+Tcell_fc = T_fc + ((NOCT_C - 20)/800) .* G_fc;
+
+% Pontianak
+
+M = readmatrix(file_pontianak);
+
+G_pont = M(:,end-1);
+T_pont = M(:,end);
+
+ok = isfinite(G_pont) & isfinite(T_pont);
+G_pont = G_pont(ok);
+T_pont = T_pont(ok);
+
+n_pont = min(length(G_pont), 24);
+G_pont = G_pont(1:n_pont);
+T_pont = T_pont(1:n_pont);
+hours_pont = (0:n_pont-1)';
+
+Tcell_pont = T_pont + ((NOCT_C - 20)/800) .* G_pont;
+
+
+% Plot
+
+figure;
+plot(hours_oslo, Tcell_oslo, 'o-', 'LineWidth', 2); hold on;
+plot(hours_fc,   Tcell_fc,   's-', 'LineWidth', 2);
+plot(hours_pont, Tcell_pont, '^-', 'LineWidth', 2);
+
+grid on;
+xlabel('Hour of day');
+ylabel('Cell Temperature (°C)');
+title('Cell Temperature vs Time – 21st June');
+
+legend('Oslo','Furnace Creek','Pontianak','Location','best');
+
+xlim([0 23]);
+ylim([min([Tcell_oslo; Tcell_fc; Tcell_pont]) - 2, ...
+      max([Tcell_oslo; Tcell_fc; Tcell_pont]) + 2]);
