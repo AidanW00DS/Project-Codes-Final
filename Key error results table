@@ -1,0 +1,194 @@
+
+%% Compare model and datasheet key PV parameters and create results table
+
+modelName = "SP150";
+
+% Choose which set of curves to analyse
+% type = 'temperature'  -> uses T = 20,30,40,50,60 at G = 1000
+% type = 'irradiance'   -> uses G = 200,400,600,800,1000 at T = 25
+
+type = 'temperature';   % change to 'irradiance' if needed
+
+Ns = 72;
+assignin('base','Ns',Ns);
+assignin('base','Rsh',1e7);
+assignin('base','Eg0',1.12);
+
+switch lower(type)
+    case 'temperature'
+        values = [20 30 40 50 60];
+        files = { ...
+            'SP150_20T.xlsx', ...
+            'SP150_30T.xlsx', ...
+            'SP150_40T.xlsx', ...
+            'SP150_50T.xlsx', ...
+            'SP150_60T.xlsx'};
+        modeLabel = 'Temperature_C';
+
+    case 'irradiance'
+        values = [200 400 600 800 1000];
+        files = { ...
+            'SP150_200G.xlsx', ...
+            'SP150_400G.xlsx', ...
+            'SP150_600G.xlsx', ...
+            'SP150_800G.xlsx', ...
+            'SP150_1000G.xlsx'};
+        modeLabel = 'Irradiance_Wm2';
+
+    otherwise
+        error('type must be either ''temperature'' or ''irradiance''.');
+end
+
+% Storage
+nCases = numel(values);
+
+CondValue   = NaN(nCases,1);
+
+Voc_model   = NaN(nCases,1);
+Isc_model   = NaN(nCases,1);
+Vmpp_model  = NaN(nCases,1);
+Impp_model  = NaN(nCases,1);
+Pmpp_model  = NaN(nCases,1);
+
+Voc_ds      = NaN(nCases,1);
+Isc_ds      = NaN(nCases,1);
+Vmpp_ds     = NaN(nCases,1);
+Impp_ds     = NaN(nCases,1);
+Pmpp_ds     = NaN(nCases,1);
+
+Voc_err     = NaN(nCases,1);
+Isc_err     = NaN(nCases,1);
+Vmpp_err    = NaN(nCases,1);
+Pmpp_err    = NaN(nCases,1);
+
+Voc_err_pct  = NaN(nCases,1);
+Isc_err_pct  = NaN(nCases,1);
+Vmpp_err_pct = NaN(nCases,1);
+Pmpp_err_pct = NaN(nCases,1);
+
+% Main loop
+for k = 1:nCases
+
+    CondValue(k) = values(k);
+    filename = files{k};
+
+    % Set model operating condition
+    switch lower(type)
+        case 'temperature'
+            T_C = values(k);
+            G   = 1000;
+        case 'irradiance'
+            G   = values(k);
+            T_C = 25;
+    end
+
+    assignin('base','G',G);
+    assignin('base','T',T_C + 273.15);
+
+    % Load datasheet IV curve
+    M = readmatrix(filename);
+
+    Vd = M(:,1);
+    Id = M(:,2);
+
+    ok = isfinite(Vd) & isfinite(Id);
+    Vd = Vd(ok);
+    Id = Id(ok);
+
+    [Vd, idx] = sort(Vd);
+    Id = Id(idx);
+
+    [Vd, u] = unique(Vd);
+    Id = Id(u);
+
+    % Datasheet power
+    Pd = Vd .* Id;
+
+    % Datasheet Isc: current at V = 0
+    [Vd_u, uVd] = unique(Vd);
+    Id_u = Id(uVd);
+    Isc_ds(k) = interp1(Vd_u, Id_u, 0, 'linear', 'extrap');
+
+    % Datasheet Voc: voltage at I = 0
+    [Id_sort, idxId] = sort(Id);
+    Vd_sort = Vd(idxId);
+    [Id_u2, uId2] = unique(Id_sort);
+    Vd_u2 = Vd_sort(uId2);
+    Voc_ds(k) = interp1(Id_u2, Vd_u2, 0, 'linear', 'extrap');
+
+    % Datasheet MPP
+    [Pmpp_ds(k), idxPmpp_d] = max(Pd);
+    Vmpp_ds(k) = Vd(idxPmpp_d);
+    Impp_ds(k) = Id(idxPmpp_d);
+
+
+    % Run Simulink model
+    simOut = sim(modelName,'SrcWorkspace','base');
+
+    Vm = simOut.Vout;
+    Im = simOut.Iout;
+
+    if isa(Vm,'timeseries'), Vm = Vm.Data; end
+    if isa(Im,'timeseries'), Im = Im.Data; end
+
+    Vm = Vm(:);
+    Im = Im(:);
+
+    okm = isfinite(Vm) & isfinite(Im);
+    Vm = Vm(okm);
+    Im = Im(okm);
+
+    [Vm, idxm] = sort(Vm);
+    Im = Im(idxm);
+
+    [Vm, um] = unique(Vm);
+    Im = Im(um);
+
+    Pm = Vm .* Im;
+
+    % Model Isc: current at V = 0
+    [Vm_u, uVm] = unique(Vm);
+    Im_u = Im(uVm);
+    Isc_model(k) = interp1(Vm_u, Im_u, 0, 'linear', 'extrap');
+
+    % Model Voc: voltage at I = 0
+    [Im_sort, idxIm] = sort(Im);
+    Vm_sort = Vm(idxIm);
+    [Im_u2, uIm2] = unique(Im_sort);
+    Vm_u2 = Vm_sort(uIm2);
+    Voc_model(k) = interp1(Im_u2, Vm_u2, 0, 'linear', 'extrap');
+
+    % Model MPP
+    [Pmpp_model(k), idxPmpp_m] = max(Pm);
+    Vmpp_model(k) = Vm(idxPmpp_m);
+    Impp_model(k) = Im(idxPmpp_m);
+
+    % Errors
+    Voc_err(k)  = Voc_model(k)  - Voc_ds(k);
+    Isc_err(k)  = Isc_model(k)  - Isc_ds(k);
+    Vmpp_err(k) = Vmpp_model(k) - Vmpp_ds(k);
+    Pmpp_err(k) = Pmpp_model(k) - Pmpp_ds(k);
+
+    Voc_err_pct(k)  = 100 * Voc_err(k)  / Voc_ds(k);
+    Isc_err_pct(k)  = 100 * Isc_err(k)  / Isc_ds(k);
+    Vmpp_err_pct(k) = 100 * Vmpp_err(k) / Vmpp_ds(k);
+    Pmpp_err_pct(k) = 100 * Pmpp_err(k) / Pmpp_ds(k);
+
+    fprintf('Done: %s = %g\n', modeLabel, values(k));
+end
+
+% Create table
+Results = table( ...
+    CondValue, ...
+    Voc_ds, Voc_model, Voc_err, Voc_err_pct, ...
+    Isc_ds, Isc_model, Isc_err, Isc_err_pct, ...
+    Vmpp_ds, Vmpp_model, Vmpp_err, Vmpp_err_pct, ...
+    Pmpp_ds, Pmpp_model, Pmpp_err, Pmpp_err_pct, ...
+    'VariableNames', { ...
+    modeLabel, ...
+    'Voc_ds_V','Voc_model_V','Voc_err_V','Voc_err_pct', ...
+    'Isc_ds_A','Isc_model_A','Isc_err_A','Isc_err_pct', ...
+    'Vmpp_ds_V','Vmpp_model_V','Vmpp_err_V','Vmpp_err_pct', ...
+    'Pmpp_ds_W','Pmpp_model_W','Pmpp_err_W','Pmpp_err_pct'});
+
+disp(Results);
