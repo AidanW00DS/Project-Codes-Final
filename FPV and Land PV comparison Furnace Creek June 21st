@@ -1,0 +1,325 @@
+%% Furnace Creek 21st June: Land PV (NOCT) vs FPV (2 cases, Faiman)
+
+modelName = "SP150";
+filename  = "Furnace Creek 21st june AVERAGE.xlsx";
+
+
+% Fixed model settings
+Ns = 72;
+assignin('base','Ns',Ns);
+assignin('base','Rsh',1e7);
+assignin('base','Eg0',1.12);
+
+
+% Module area from 
+
+A_module = (63.9 * 0.0254) * (32.1 * 0.0254);   % m^2
+
+
+% Read spreadsheet
+% Assumes:
+% - second last column = irradiance G (W/m^2)
+% - last column        = ambient temperature Tamb (°C)
+
+M = readmatrix(filename);
+
+G_day    = M(:,end-1);
+Tamb_day = M(:,end);
+
+ok = isfinite(G_day) & isfinite(Tamb_day);
+G_day    = G_day(ok);
+Tamb_day = Tamb_day(ok);
+
+% Limit to 24 hours
+n = min(length(G_day),24);
+G_day    = G_day(1:n);
+Tamb_day = Tamb_day(1:n);
+hours    = (0:n-1)';
+
+
+% Wind speed
+
+
+v_day = 1.0 * ones(n,1);   % m/s
+
+
+% Temperature models
+
+
+% Land PV baseline: NOCT model
+NOCT_C = 45;
+Tcell_land_C = Tamb_day + ((NOCT_C - 20)/800) .* G_day;
+
+% FPV Case A: Faiman model
+U0_fpv_A = 24.4;
+U1_fpv_A = 6.5;
+
+% FPV Case B: Faiman model
+U0_fpv_B = 34.8;
+U1_fpv_B = 0.8;
+
+Tcell_fpvA_C = Tamb_day + G_day ./ (U0_fpv_A + U1_fpv_A .* v_day);
+Tcell_fpvB_C = Tamb_day + G_day ./ (U0_fpv_B + U1_fpv_B .* v_day);
+
+% Nighttime handling
+night = G_day <= 1e-6;
+Tcell_land_C(night) = Tamb_day(night);
+Tcell_fpvA_C(night) = Tamb_day(night);
+Tcell_fpvB_C(night) = Tamb_day(night);
+
+
+% Storage
+
+Pmpp_land = zeros(n,1);
+Pmpp_fpvA = zeros(n,1);
+Pmpp_fpvB = zeros(n,1);
+
+eta_land = zeros(n,1);
+eta_fpvA = zeros(n,1);
+eta_fpvB = zeros(n,1);
+
+% Run model hour by hour for all 3 cases
+
+for k = 1:n
+
+    G = G_day(k);
+
+    if G <= 1e-6
+        Pmpp_land(k) = 0;
+        Pmpp_fpvA(k) = 0;
+        Pmpp_fpvB(k) = 0;
+        eta_land(k)  = 0;
+        eta_fpvA(k)  = 0;
+        eta_fpvB(k)  = 0;
+        continue
+    end
+
+
+    % Land PV (NOCT)
+
+    assignin('base','G',G);
+    assignin('base','T',Tcell_land_C(k) + 273.15);
+
+    try
+        simOut = sim(modelName,'SrcWorkspace','base');
+        V = simOut.Vout;
+        I = simOut.Iout;
+
+        if isa(V,'timeseries'), V = V.Data; end
+        if isa(I,'timeseries'), I = I.Data; end
+
+        V = V(:);
+        I = I(:);
+
+        ok2 = isfinite(V) & isfinite(I);
+        V = V(ok2);
+        I = I(ok2);
+
+        if ~isempty(V) && ~isempty(I)
+            P = V .* I;
+            Pmpp_land(k) = max(P);
+
+            if ~isfinite(Pmpp_land(k)) || Pmpp_land(k) < 0
+                Pmpp_land(k) = 0;
+            end
+        end
+    catch ME
+        fprintf('Land PV simulation failed at hour %d: %s\n', hours(k), ME.message);
+        Pmpp_land(k) = 0;
+    end
+
+
+    % FPV Case A 
+
+    assignin('base','G',G);
+    assignin('base','T',Tcell_fpvA_C(k) + 273.15);
+
+    try
+        simOut = sim(modelName,'SrcWorkspace','base');
+        V = simOut.Vout;
+        I = simOut.Iout;
+
+        if isa(V,'timeseries'), V = V.Data; end
+        if isa(I,'timeseries'), I = I.Data; end
+
+        V = V(:);
+        I = I(:);
+
+        ok2 = isfinite(V) & isfinite(I);
+        V = V(ok2);
+        I = I(ok2);
+
+        if ~isempty(V) && ~isempty(I)
+            P = V .* I;
+            Pmpp_fpvA(k) = max(P);
+
+            if ~isfinite(Pmpp_fpvA(k)) || Pmpp_fpvA(k) < 0
+                Pmpp_fpvA(k) = 0;
+            end
+        end
+    catch ME
+        fprintf('FPV Case A simulation failed at hour %d: %s\n', hours(k), ME.message);
+        Pmpp_fpvA(k) = 0;
+    end
+
+    % FPV Case B 
+    
+    assignin('base','G',G);
+    assignin('base','T',Tcell_fpvB_C(k) + 273.15);
+
+    try
+        simOut = sim(modelName,'SrcWorkspace','base');
+        V = simOut.Vout;
+        I = simOut.Iout;
+
+        if isa(V,'timeseries'), V = V.Data; end
+        if isa(I,'timeseries'), I = I.Data; end
+
+        V = V(:);
+        I = I(:);
+
+        ok2 = isfinite(V) & isfinite(I);
+        V = V(ok2);
+        I = I(ok2);
+
+        if ~isempty(V) && ~isempty(I)
+            P = V .* I;
+            Pmpp_fpvB(k) = max(P);
+
+            if ~isfinite(Pmpp_fpvB(k)) || Pmpp_fpvB(k) < 0
+                Pmpp_fpvB(k) = 0;
+            end
+        end
+    catch ME
+        fprintf('FPV Case B simulation failed at hour %d: %s\n', hours(k), ME.message);
+        Pmpp_fpvB(k) = 0;
+    end
+
+
+    % Efficiencie
+
+    eta_land(k) = 100 * Pmpp_land(k) / (G * A_module);
+    eta_fpvA(k) = 100 * Pmpp_fpvA(k) / (G * A_module);
+    eta_fpvB(k) = 100 * Pmpp_fpvB(k) / (G * A_module);
+
+    if ~isfinite(eta_land(k)) || eta_land(k) < 0
+        eta_land(k) = 0;
+    end
+    if ~isfinite(eta_fpvA(k)) || eta_fpvA(k) < 0
+        eta_fpvA(k) = 0;
+    end
+    if ~isfinite(eta_fpvB(k)) || eta_fpvB(k) < 0
+        eta_fpvB(k) = 0;
+    end
+end
+
+
+% Energy calculation
+
+E_land_Wh = trapz(hours, Pmpp_land);
+E_fpvA_Wh = trapz(hours, Pmpp_fpvA);
+E_fpvB_Wh = trapz(hours, Pmpp_fpvB);
+
+DeltaE_A_Wh = E_fpvA_Wh - E_land_Wh;
+DeltaE_B_Wh = E_fpvB_Wh - E_land_Wh;
+
+Gain_A_pct = 100 * DeltaE_A_Wh / E_land_Wh;
+Gain_B_pct = 100 * DeltaE_B_Wh / E_land_Wh;
+
+
+% Cumulative energy
+
+Ecum_land = zeros(n,1);
+Ecum_fpvA = zeros(n,1);
+Ecum_fpvB = zeros(n,1);
+
+for k = 2:n
+    dt = hours(k) - hours(k-1);
+    Ecum_land(k) = Ecum_land(k-1) + 0.5 * (Pmpp_land(k-1) + Pmpp_land(k)) * dt;
+    Ecum_fpvA(k) = Ecum_fpvA(k-1) + 0.5 * (Pmpp_fpvA(k-1) + Pmpp_fpvA(k)) * dt;
+    Ecum_fpvB(k) = Ecum_fpvB(k-1) + 0.5 * (Pmpp_fpvB(k-1) + Pmpp_fpvB(k)) * dt;
+end
+
+
+% Print summary
+fprintf('\nFurnace Creek - 21st June\n');
+fprintf('Land PV total energy   = %.2f Wh\n', E_land_Wh);
+fprintf('FPV Case A total energy= %.2f Wh\n', E_fpvA_Wh);
+fprintf('FPV Case B total energy= %.2f Wh\n', E_fpvB_Wh);
+fprintf('FPV Case A gain        = %.2f Wh (%.2f%%)\n', DeltaE_A_Wh, Gain_A_pct);
+fprintf('FPV Case B gain        = %.2f Wh (%.2f%%)\n', DeltaE_B_Wh, Gain_B_pct);
+fprintf('Max land cell temp     = %.2f C\n', max(Tcell_land_C));
+fprintf('Max FPV A cell temp    = %.2f C\n', max(Tcell_fpvA_C));
+fprintf('Max FPV B cell temp    = %.2f C\n', max(Tcell_fpvB_C));
+
+
+% Results table
+
+Results = table(hours, G_day, Tamb_day, v_day, ...
+    Tcell_land_C, Tcell_fpvA_C, Tcell_fpvB_C, ...
+    Pmpp_land, Pmpp_fpvA, Pmpp_fpvB, ...
+    eta_land, eta_fpvA, eta_fpvB, ...
+    Ecum_land, Ecum_fpvA, Ecum_fpvB, ...
+    'VariableNames', {'Hour','G_Wm2','Tamb_C','WindSpeed_ms', ...
+    'Tcell_Land_C','Tcell_FPV_A_C','Tcell_FPV_B_C', ...
+    'Pmpp_Land_W','Pmpp_FPV_A_W','Pmpp_FPV_B_W', ...
+    'Eff_Land_pct','Eff_FPV_A_pct','Eff_FPV_B_pct', ...
+    'CumEnergy_Land_Wh','CumEnergy_FPV_A_Wh','CumEnergy_FPV_B_Wh'});
+
+disp(Results);
+writetable(Results, 'FurnaceCreek_21June_NOCT_Land_vs_FPV_2Cases.xlsx');
+
+
+% Graph 1: Cell temperature
+figure;
+plot(hours, Tcell_land_C, 'o-', 'LineWidth', 2, 'MarkerSize', 6); hold on;
+plot(hours, Tcell_fpvA_C, 's-', 'LineWidth', 2, 'MarkerSize', 6);
+plot(hours, Tcell_fpvB_C, '^-', 'LineWidth', 2, 'MarkerSize', 6);
+grid on;
+xlabel('Hour of day');
+ylabel('Cell temperature (°C)');
+title('Land PV (NOCT) vs FPV (Faiman) Cell Temperature - Furnace Creek, 21st June');
+legend('Land PV','FPV Case A','FPV Case B','Location','best');
+xlim([0 23]);
+
+
+% Graph 2: Power 
+
+figure;
+plot(hours, Pmpp_land, 'o-', 'LineWidth', 2, 'MarkerSize', 6); hold on;
+plot(hours, Pmpp_fpvA, 's-', 'LineWidth', 2, 'MarkerSize', 6);
+plot(hours, Pmpp_fpvB, '^-', 'LineWidth', 2, 'MarkerSize', 6);
+grid on;
+xlabel('Hour of day');
+ylabel('Power at MPP (W)');
+title('Land PV vs FPV Power Output - Furnace Creek, 21st June');
+legend('Land PV','FPV Case A','FPV Case B','Location','best');
+xlim([0 23]);
+
+
+% Graph 3: Efficiency
+
+figure;
+plot(hours, eta_land, 'o-', 'LineWidth', 2, 'MarkerSize', 6); hold on;
+plot(hours, eta_fpvA, 's-', 'LineWidth', 2, 'MarkerSize', 6);
+plot(hours, eta_fpvB, '^-', 'LineWidth', 2, 'MarkerSize', 6);
+grid on;
+xlabel('Hour of day');
+ylabel('Efficiency (%)');
+title('Land PV vs FPV Efficiency - Furnace Creek, 21st June');
+legend('Land PV','FPV Case A','FPV Case B','Location','best');
+xlim([0 23]);
+
+
+% Graph 4: Cumulative energy
+
+figure;
+plot(hours, Ecum_land, 'o-', 'LineWidth', 2, 'MarkerSize', 6); hold on;
+plot(hours, Ecum_fpvA, 's-', 'LineWidth', 2, 'MarkerSize', 6);
+plot(hours, Ecum_fpvB, '^-', 'LineWidth', 2, 'MarkerSize', 6);
+grid on;
+xlabel('Hour of day');
+ylabel('Cumulative energy (Wh)');
+title('Land PV vs FPV Cumulative Energy - Furnace Creek, 21st June');
+legend('Land PV','FPV Case A','FPV Case B','Location','best');
+xlim([0 23]);
