@@ -89,7 +89,7 @@ for k = 1:n_oslo
 end
 
 % Furnace Creek
-% -----------------------------
+
 M = readmatrix(filename_furnace);
 G_day_furnace    = M(:,end-1);
 Tamb_day_furnace = M(:,end);
