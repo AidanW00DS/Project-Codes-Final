@@ -1,0 +1,277 @@
+%% Find best Rs and n at G = 200 W/m^2
+
+modelName = "SP150";
+filename  = "SP150_200G.xlsx";
+
+% Fixed conditions
+G   = 200;
+T_C = 20;
+Ns  = 72;
+
+assignin('base','G',G);
+assignin('base','T',T_C + 273.15);
+assignin('base','Ns',Ns);
+
+% Fixed model parameters
+assignin('base','Rsh',1e7);
+assignin('base','Eg0',1.12);
+assignin('base','I0_ref',2.98e-4);
+
+% Load datasheet IV curve
+M = readmatrix(filename);
+
+V_ds = M(:,1);
+I_ds = M(:,2);
+
+ok = isfinite(V_ds) & isfinite(I_ds);
+V_ds = V_ds(ok);
+I_ds = I_ds(ok);
+
+[V_ds, idx] = sort(V_ds);
+I_ds = I_ds(idx);
+
+[V_ds, u] = unique(V_ds);
+I_ds = I_ds(u);
+
+% Datasheet Voc
+[Ids_sort, idxI] = sort(I_ds);
+Vds_sort = V_ds(idxI);
+[Ids_u, uI] = unique(Ids_sort);
+Vds_u = Vds_sort(uI);
+Voc_ds = interp1(Ids_u, Vds_u, 0, 'linear', 'extrap');
+
+% Initial guess
+Rs0 = 0.60;
+n0  = 2;
+
+assignin('base','Rs',Rs0);
+assignin('base','n',n0);
+bestScore = Inf;
+bestRMSE  = Inf;
+bestRs    = NaN;
+bestn     = NaN;
+bestV     = [];
+bestI     = [];
+bestVoc   = NaN;
+Ngrid = 300;
+fprintf('Starting robust search for best Rs and n at G = %d W/m^2 ...\n',G);
+
+% Test initial guess first
+
+try
+    simOut = sim(modelName,'SrcWorkspace','base');
+    V = simOut.Vout;
+    I = simOut.Iout;
+    if isa(V,'timeseries'), V = V.Data; end
+    if isa(I,'timeseries'), I = I.Data; end
+    V = V(:);
+    I = I(:);
+    okm = isfinite(V) & isfinite(I);
+    V = V(okm);
+    I = I(okm);
+    [V, idxm] = sort(V);
+    I = I(idxm);
+    [V, um] = unique(V);
+    I = I(um);
+    keep = I >= -0.05;
+    V = V(keep);
+    I = I(keep);
+    if numel(V) >= 20
+        Vmin = max(min(V_ds), min(V));
+        Vmax = min(max(V_ds), max(V));
+        if Vmax > Vmin
+            Vgrid = linspace(Vmin, Vmax, Ngrid);
+            Ids = interp1(V_ds, I_ds, Vgrid, 'linear');
+            Im  = interp1(V, I, Vgrid, 'linear');
+            err = Im - Ids;
+            RMSE = sqrt(mean(err.^2));
+            [Im_sort, idxIm] = sort(I);
+            Vm_sort = V(idxIm);
+            [Im_u, uIm] = unique(Im_sort);
+            Vm_u = Vm_sort(uIm);
+            if numel(Im_u) >= 2
+                Voc_model = interp1(Im_u, Vm_u, 0, 'linear', 'extrap');
+                score = RMSE + 0.25*abs(Voc_model - Voc_ds);
+                bestScore = score;
+                bestRMSE  = RMSE;
+                bestRs    = Rs0;
+                bestn     = n0;
+                bestV     = V;
+                bestI     = I;
+                bestVoc   = Voc_model;
+                fprintf('Initial guess valid -> Rs=%.4f, n=%.4f, RMSE=%.5f A, Voc=%.3f V\n', ...
+                    bestRs,bestn,bestRMSE,bestVoc);
+            end
+        end
+    end
+catch
+end
+
+% Stage 1: coarse search
+Rs_list = linspace(0.05,0.50,19);
+n_list  = linspace(1.8,3.2,29);
+for Rs = Rs_list
+    assignin('base','Rs',Rs);
+    for n = n_list
+        assignin('base','n',n);
+        try
+            simOut = sim(modelName,'SrcWorkspace','base');
+            V = simOut.Vout;
+            I = simOut.Iout;
+            if isa(V,'timeseries'), V = V.Data; end
+            if isa(I,'timeseries'), I = I.Data; end
+            V = V(:);
+            I = I(:);
+            okm = isfinite(V) & isfinite(I);
+            V = V(okm);
+            I = I(okm);
+            if numel(V) < 20
+                continue
+            end
+            [V, idxm] = sort(V);
+            I = I(idxm);
+            [V, um] = unique(V);
+            I = I(um);
+            keep = I >= -0.05;
+            V = V(keep);
+            I = I(keep);
+            if numel(V) < 20
+                continue
+            end
+            Vmin = max(min(V_ds), min(V));
+            Vmax = min(max(V_ds), max(V));
+            if Vmax <= Vmin
+                continue
+            end
+            Vgrid = linspace(Vmin, Vmax, Ngrid);
+            Ids = interp1(V_ds, I_ds, Vgrid, 'linear');
+            Im  = interp1(V, I, Vgrid, 'linear');
+            err = Im - Ids;
+            RMSE = sqrt(mean(err.^2));
+            [Im_sort, idxIm] = sort(I);
+            Vm_sort = V(idxIm);
+            [Im_u, uIm] = unique(Im_sort);
+            Vm_u = Vm_sort(uIm);
+            if numel(Im_u) < 2
+                continue
+            end
+            Voc_model = interp1(Im_u, Vm_u, 0, 'linear', 'extrap');
+            if ~isfinite(Voc_model)
+                continue
+            end
+            score = RMSE + 0.25*abs(Voc_model - Voc_ds);
+            if score < bestScore
+                bestScore = score;
+                bestRMSE  = RMSE;
+                bestRs    = Rs;
+                bestn     = n;
+                bestV     = V;
+                bestI     = I;
+                bestVoc   = Voc_model;
+                fprintf('Stage 1 best -> Rs=%.4f, n=%.4f, RMSE=%.5f A, Voc=%.3f V, score=%.5f\n', ...
+                    bestRs,bestn,bestRMSE,bestVoc,bestScore);
+            end
+        catch
+            continue
+        end
+    end
+end
+
+% Stage 2: fine search around best coarse result
+
+if isfinite(bestScore)
+    Rs_list = linspace(max(0,bestRs-0.06), bestRs+0.06, 13);
+    n_list  = linspace(bestn-0.25, bestn+0.25, 21);
+    for Rs = Rs_list
+        assignin('base','Rs',Rs);
+        for n = n_list
+            assignin('base','n',n);
+            try
+                simOut = sim(modelName,'SrcWorkspace','base');
+                V = simOut.Vout;
+                I = simOut.Iout;
+                if isa(V,'timeseries'), V = V.Data; end
+                if isa(I,'timeseries'), I = I.Data; end
+                V = V(:);
+                I = I(:);
+                okm = isfinite(V) & isfinite(I);
+                V = V(okm);
+                I = I(okm);
+                if numel(V) < 20
+                    continue
+                end
+                [V, idxm] = sort(V);
+                I = I(idxm);
+                [V, um] = unique(V);
+                I = I(um);
+                keep = I >= -0.05;
+                V = V(keep);
+                I = I(keep);
+                if numel(V) < 20
+                    continue
+                end
+                Vmin = max(min(V_ds), min(V));
+                Vmax = min(max(V_ds), max(V));
+                if Vmax <= Vmin
+                    continue
+                end
+                Vgrid = linspace(Vmin, Vmax, Ngrid);
+                Ids = interp1(V_ds, I_ds, Vgrid, 'linear');
+                Im  = interp1(V, I, Vgrid, 'linear');
+                err = Im - Ids;
+                RMSE = sqrt(mean(err.^2));
+                [Im_sort, idxIm] = sort(I);
+                Vm_sort = V(idxIm);
+                [Im_u, uIm] = unique(Im_sort);
+                Vm_u = Vm_sort(uIm);
+                if numel(Im_u) < 2
+                    continue
+                end
+                Voc_model = interp1(Im_u, Vm_u, 0, 'linear', 'extrap');
+                if ~isfinite(Voc_model)
+                    continue
+                end
+                score = RMSE + 0.25*abs(Voc_model - Voc_ds);
+                if score < bestScore
+                    bestScore = score;
+                    bestRMSE  = RMSE;
+                    bestRs    = Rs;
+                    bestn     = n;
+                    bestV     = V;
+                    bestI     = I;
+                    bestVoc   = Voc_model;
+                    fprintf('Stage 2 best -> Rs=%.4f, n=%.4f, RMSE=%.5f A, Voc=%.3f V, score=%.5f\n', ...
+                        bestRs,bestn,bestRMSE,bestVoc,bestScore);
+                end
+            catch
+                continue
+            end
+        end
+    end
+end
+
+% Final result
+if ~isfinite(bestScore)
+    error('No valid simulation found. Try widening the search range.');
+end
+fprintf('\nBEST VALUES AT G = %d W/m^2\n',G);
+fprintf('Rs       = %.4f ohm\n',bestRs);
+fprintf('n        = %.4f\n',bestn);
+fprintf('RMSE     = %.5f A\n',bestRMSE);
+fprintf('Voc_model= %.3f V\n',bestVoc);
+fprintf('Voc_ds   = %.3f V\n',Voc_ds);
+fprintf('Score    = %.5f\n',bestScore);
+assignin('base','Rs',bestRs);
+assignin('base','n',bestn);
+
+% Plot best fit
+
+figure; hold on; grid on;
+plot(V_ds, I_ds, '--', 'LineWidth', 2, 'DisplayName', 'Datasheet');
+plot(bestV, bestI, '-', 'LineWidth', 2, 'DisplayName', 'Best model fit');
+xlabel('Voltage (V)');
+ylabel('Current (A)');
+title('Best IV Fit at G = 200 W/m^2');
+legend('Location','southwest');
+xlim([0 50]);
+ylim([0 6]);
