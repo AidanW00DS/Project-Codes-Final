@@ -1,0 +1,178 @@
+%% Furnace Creek: actual vs normal operating temp
+
+modelName = "SP150";
+
+filename = "Furnace Creek 21st june AVERAGE.xlsx";
+dayLabel = "Furnace Creek - 21st June";
+
+% Fixed panel / model settings
+Ns = 72;
+assignin('base','Ns',Ns);
+assignin('base','Rsh',1e7);
+assignin('base','Eg0',1.12);
+
+% Module area
+L_in = 63.9;
+W_in = 32.1;
+A_module = (L_in * 0.0254) * (W_in * 0.0254);
+
+% Temperature settings
+NOCT_C = 45;
+Tnormal_C = 25;
+
+% Read data
+M = readmatrix(filename);
+
+G_day    = M(:,end-1);
+Tamb_day = M(:,end);
+
+ok = isfinite(G_day) & isfinite(Tamb_day);
+G_day    = G_day(ok);
+Tamb_day = Tamb_day(ok);
+
+n = length(G_day);
+hours = (0:n-1)';
+
+% Cell temperatures
+Tcell_actual_C = Tamb_day + ((NOCT_C - 20)/800) .* G_day;
+Tcell_normal_C = Tnormal_C * ones(n,1);
+
+% Storage
+Pmpp_actual = zeros(n,1);
+Vmpp_actual = NaN(n,1);
+Impp_actual = NaN(n,1);
+eta_actual  = zeros(n,1);
+
+Pmpp_normal = zeros(n,1);
+Vmpp_normal = NaN(n,1);
+Impp_normal = NaN(n,1);
+eta_normal  = zeros(n,1);
+
+% Simulation loop
+for k = 1:n
+
+    G = G_day(k);
+
+    %  Actual temp
+    assignin('base','G',G);
+    assignin('base','T',Tcell_actual_C(k) + 273.15);
+
+    try
+        simOut = sim(modelName,'SrcWorkspace','base');
+
+        V = simOut.Vout; I = simOut.Iout;
+        if isa(V,'timeseries'), V = V.Data; end
+        if isa(I,'timeseries'), I = I.Data; end
+
+        V = V(:); I = I(:);
+        ok2 = isfinite(V) & isfinite(I);
+        V = V(ok2); I = I(ok2);
+
+        if ~isempty(V)
+            [V, idx] = sort(V); I = I(idx);
+            [V, u] = unique(V); I = I(u);
+
+            P = V .* I;
+            [Pmpp_actual(k), idx_mpp] = max(P);
+            Vmpp_actual(k) = V(idx_mpp);
+            Impp_actual(k) = I(idx_mpp);
+
+            if G > 1e-6
+                eta_actual(k) = 100 * Pmpp_actual(k) / (G * A_module);
+            end
+        end
+    catch
+    end
+
+    % Normal temperature 
+    assignin('base','G',G);
+    assignin('base','T',Tcell_normal_C(k) + 273.15);
+
+    try
+        simOut = sim(modelName,'SrcWorkspace','base');
+
+        V = simOut.Vout; I = simOut.Iout;
+        if isa(V,'timeseries'), V = V.Data; end
+        if isa(I,'timeseries'), I = I.Data; end
+
+        V = V(:); I = I(:);
+        ok2 = isfinite(V) & isfinite(I);
+        V = V(ok2); I = I(ok2);
+
+        if ~isempty(V)
+            [V, idx] = sort(V); I = I(idx);
+            [V, u] = unique(V); I = I(u);
+
+            P = V .* I;
+            [Pmpp_normal(k), idx_mpp] = max(P);
+            Vmpp_normal(k) = V(idx_mpp);
+            Impp_normal(k) = I(idx_mpp);
+
+            if G > 1e-6
+                eta_normal(k) = 100 * Pmpp_normal(k) / (G * A_module);
+            end
+        end
+    catch
+    end
+end
+
+% Energy calculations
+
+E_actual_Wh = trapz(hours, Pmpp_actual);
+E_normal_Wh = trapz(hours, Pmpp_normal);
+
+E_lost_Wh = E_normal_Wh - E_actual_Wh;
+loss_pct = 100 * E_lost_Wh / max(E_normal_Wh,1e-6);
+
+
+% Cumulative energy
+
+Ecum_actual = cumtrapz(hours, Pmpp_actual);
+Ecum_normal = cumtrapz(hours, Pmpp_normal);
+
+% Graphs
+
+% Power
+figure;
+plot(hours, Pmpp_actual, 'o-','LineWidth',2); hold on;
+plot(hours, Pmpp_normal, 's-','LineWidth',2);
+grid on;
+xlabel('Hour'); ylabel('Power (W)');
+title('Power Comparison');
+legend('Actual','Normal');
+
+% Efficiency
+figure;
+plot(hours, eta_actual, 'o-','LineWidth',2); hold on;
+plot(hours, eta_normal, 's-','LineWidth',2);
+grid on;
+xlabel('Hour'); ylabel('Efficiency (%)');
+title('Efficiency Comparison');
+legend('Actual','Normal');
+
+% Cumulative energy
+figure;
+plot(hours, Ecum_actual, 'o-','LineWidth',2); hold on;
+plot(hours, Ecum_normal, 's-','LineWidth',2);
+grid on;
+xlabel('Hour'); ylabel('Energy (Wh)');
+title('Cumulative Energy');
+legend('Actual','Normal');
+
+% Voltage
+figure;
+plot(hours, Vmpp_actual, 'o-','LineWidth',2); hold on;
+plot(hours, Vmpp_normal, 's-','LineWidth',2);
+grid on;
+xlabel('Hour'); ylabel('Voltage (V)');
+title('Voltage Comparison');
+legend('Actual','Normal');
+
+% Current
+figure;
+plot(hours, Impp_actual, 'o-','LineWidth',2); hold on;
+plot(hours, Impp_normal, 's-','LineWidth',2);
+grid on;
+xlabel('Hour'); ylabel('Current (A)');
+title('Current Comparison');
+legend('Actual','Normal');
