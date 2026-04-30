@@ -1,0 +1,252 @@
+%% Furnace Creek 21st June:
+% Comparison of current, voltage and power at MPP
+% Actual Furnace Creek temperature vs fixed NOCT temperature
+
+modelName = "SP150";
+filename  = "Furnace Creek 21st june AVERAGE.xlsx";
+
+% Fixed model settings
+
+Ns = 72;
+assignin('base','Ns',Ns);
+assignin('base','Rsh',1e7);
+assignin('base','Eg0',1.12);
+
+
+% Thermal setting
+
+NOCT_C = 45;
+NOCT_model_C = 45;
+
+
+% Read spreadsheet
+
+M = readmatrix(filename);
+
+G_day    = M(:,end-1);
+Tamb_day = M(:,end);
+
+ok = isfinite(G_day) & isfinite(Tamb_day);
+G_day    = G_day(ok);
+Tamb_day = Tamb_day(ok);
+
+n = min(length(G_day),24);
+G_day    = G_day(1:n);
+Tamb_day = Tamb_day(1:n);
+hours    = (0:n-1)';
+
+% Actual Furnace Creek cell temp
+
+Tcell_actual_C = Tamb_day + ((NOCT_model_C - 20)/800) .* G_day;
+
+% Storage
+
+Pmpp_actual = zeros(n,1);
+Pmpp_noct   = zeros(n,1);
+
+Vmpp_actual = zeros(n,1);
+Vmpp_noct   = zeros(n,1);
+
+Impp_actual = zeros(n,1);
+Impp_noct   = zeros(n,1);
+
+% Run model twice per hour
+
+for k = 1:n
+
+    G = G_day(k);
+
+    if G <= 1e-6
+        continue
+    end
+
+    % Actual Furnace Creek condition
+ 
+    assignin('base','G',G);
+    assignin('base','T',Tcell_actual_C(k) + 273.15);
+
+    try
+        simOut = sim(modelName,'SrcWorkspace','base');
+
+        V = simOut.Vout;
+        I = simOut.Iout;
+
+        if isa(V,'timeseries'), V = V.Data; end
+        if isa(I,'timeseries'), I = I.Data; end
+
+        V = V(:);
+        I = I(:);
+
+        ok2 = isfinite(V) & isfinite(I);
+        V = V(ok2);
+        I = I(ok2);
+
+        if ~isempty(V) && ~isempty(I)
+            P = V .* I;
+            [Pmpp_actual(k), idx] = max(P);
+
+            Vmpp_actual(k) = V(idx);
+            Impp_actual(k) = I(idx);
+        end
+
+    catch ME
+        fprintf('Actual Furnace Creek simulation failed at hour %d: %s\n', ...
+            hours(k), ME.message);
+    end
+
+  
+    % Fixed NOCT conditions
+    assignin('base','G',G);
+    assignin('base','T',NOCT_C + 273.15);
+
+    try
+        simOut = sim(modelName,'SrcWorkspace','base');
+
+        V = simOut.Vout;
+        I = simOut.Iout;
+
+        if isa(V,'timeseries'), V = V.Data; end
+        if isa(I,'timeseries'), I = I.Data; end
+
+        V = V(:);
+        I = I(:);
+
+        ok2 = isfinite(V) & isfinite(I);
+        V = V(ok2);
+        I = I(ok2);
+
+        if ~isempty(V) && ~isempty(I)
+            P = V .* I;
+            [Pmpp_noct(k), idx] = max(P);
+
+            Vmpp_noct(k) = V(idx);
+            Impp_noct(k) = I(idx);
+        end
+
+    catch ME
+        fprintf('NOCT simulation failed at hour %d: %s\n', ...
+            hours(k), ME.message);
+    end
+end
+
+% Reduction calculation
+daylight = G_day > 1e-6;
+
+PowerReduction_W = Pmpp_noct - Pmpp_actual;
+VoltageReduction_V = Vmpp_noct - Vmpp_actual;
+CurrentReduction_A = Impp_noct - Impp_actual;
+
+PowerReduction_W(PowerReduction_W < 0) = 0;
+VoltageReduction_V(VoltageReduction_V < 0) = 0;
+CurrentReduction_A(CurrentReduction_A < 0) = 0;
+
+PowerReduction_pct = zeros(n,1);
+VoltageReduction_pct = zeros(n,1);
+CurrentReduction_pct = zeros(n,1);
+
+PowerReduction_pct(daylight) = 100 * PowerReduction_W(daylight) ./ Pmpp_noct(daylight);
+VoltageReduction_pct(daylight) = 100 * VoltageReduction_V(daylight) ./ Vmpp_noct(daylight);
+CurrentReduction_pct(daylight) = 100 * CurrentReduction_A(daylight) ./ Impp_noct(daylight);
+
+% Avoid NaN or Inf values
+PowerReduction_pct(~isfinite(PowerReduction_pct)) = 0;
+VoltageReduction_pct(~isfinite(VoltageReduction_pct)) = 0;
+CurrentReduction_pct(~isfinite(CurrentReduction_pct)) = 0;
+
+% Key values
+[maxPowerReduction_W, idxP] = max(PowerReduction_W);
+[maxVoltageReduction_V, idxV] = max(VoltageReduction_V);
+[maxCurrentReduction_A, idxI] = max(CurrentReduction_A);
+
+Energy_actual_Wh = trapz(hours, Pmpp_actual);
+Energy_noct_Wh   = trapz(hours, Pmpp_noct);
+EnergyReduction_Wh = Energy_noct_Wh - Energy_actual_Wh;
+EnergyReduction_pct = 100 * EnergyReduction_Wh / Energy_noct_Wh;
+
+% 
+% Print summary
+% -----------------------------
+fprintf('\nFurnace Creek 21st June: Actual Conditions vs NOCT\n');
+fprintf('-----------------------------------\n');
+
+fprintf('Total energy at actual Furnace Creek temperature = %.2f Wh\n', Energy_actual_Wh);
+fprintf('Total energy at NOCT temperature                 = %.2f Wh\n', Energy_noct_Wh);
+fprintf('Energy reduction                                 = %.2f Wh\n', EnergyReduction_Wh);
+fprintf('Energy reduction                                 = %.2f %%\n\n', EnergyReduction_pct);
+
+fprintf('Maximum power reduction   = %.3f W at hour %d\n', maxPowerReduction_W, hours(idxP));
+fprintf('Maximum voltage reduction = %.3f V at hour %d\n', maxVoltageReduction_V, hours(idxV));
+fprintf('Maximum current reduction = %.3f A at hour %d\n\n', maxCurrentReduction_A, hours(idxI));
+
+fprintf('Average daylight power reduction   = %.3f W\n', mean(PowerReduction_W(daylight),'omitnan'));
+fprintf('Average daylight voltage reduction = %.3f V\n', mean(VoltageReduction_V(daylight),'omitnan'));
+fprintf('Average daylight current reduction = %.3f A\n', mean(CurrentReduction_A(daylight),'omitnan'));
+
+% Results table
+Results = table(hours, G_day, Tamb_day, Tcell_actual_C, ...
+    Impp_actual, Impp_noct, CurrentReduction_A, CurrentReduction_pct, ...
+    Vmpp_actual, Vmpp_noct, VoltageReduction_V, VoltageReduction_pct, ...
+    Pmpp_actual, Pmpp_noct, PowerReduction_W, PowerReduction_pct, ...
+    'VariableNames', {'Hour','G_Wm2','Tamb_C','Tcell_Actual_C', ...
+    'Impp_Actual_A','Impp_NOCT_A','CurrentReduction_A','CurrentReduction_pct', ...
+    'Vmpp_Actual_V','Vmpp_NOCT_V','VoltageReduction_V','VoltageReduction_pct', ...
+    'Pmpp_Actual_W','Pmpp_NOCT_W','PowerReduction_W','PowerReduction_pct'});
+
+disp(Results);
+
+writetable(Results, 'FurnaceCreek_21June_NOCT_CurrentVoltagePower_Comparison.xlsx');
+
+
+% Graph 1: Current 
+figure;
+plot(hours, Impp_actual, 'o-', 'LineWidth', 2, 'MarkerSize', 7, ...
+    'DisplayName', 'Actual Furnace Creek Impp'); hold on;
+plot(hours, Impp_noct, 's--', 'LineWidth', 2, 'MarkerSize', 7, ...
+    'DisplayName', 'NOCT Impp');
+grid on;
+xlabel('Hour of day');
+ylabel('Current at MPP (A)');
+title('Furnace Creek 21st June: Current Comparison at MPP');
+legend('Location','best');
+xlim([0 23]);
+
+% Graph 2: Voltage 
+figure;
+plot(hours, Vmpp_actual, 'o-', 'LineWidth', 2, 'MarkerSize', 7, ...
+    'DisplayName', 'Actual Furnace Creek Vmpp'); hold on;
+plot(hours, Vmpp_noct, 's--', 'LineWidth', 2, 'MarkerSize', 7, ...
+    'DisplayName', 'NOCT Vmpp');
+grid on;
+xlabel('Hour of day');
+ylabel('Voltage at MPP (V)');
+title('Furnace Creek 21st June: Voltage Comparison at MPP');
+legend('Location','best');
+xlim([0 23]);
+
+% Graph 3: Power 
+figure;
+plot(hours, Pmpp_actual, 'o-', 'LineWidth', 2, 'MarkerSize', 7, ...
+    'DisplayName', 'Actual Furnace Creek Pmpp'); hold on;
+plot(hours, Pmpp_noct, 's--', 'LineWidth', 2, 'MarkerSize', 7, ...
+    'DisplayName', 'NOCT Pmpp');
+grid on;
+xlabel('Hour of day');
+ylabel('Power at MPP (W)');
+title('Furnace Creek 21st June: Power Comparison at MPP');
+legend('Location','best');
+xlim([0 23]);
+
+% Graph 4: Reductions
+figure;
+plot(hours, PowerReduction_W, 'o-', 'LineWidth', 2, 'MarkerSize', 7, ...
+    'DisplayName', 'Power reduction (W)'); hold on;
+plot(hours, VoltageReduction_V, 's--', 'LineWidth', 2, 'MarkerSize', 7, ...
+    'DisplayName', 'Voltage reduction (V)');
+plot(hours, CurrentReduction_A, 'd-.', 'LineWidth', 2, 'MarkerSize', 7, ...
+    'DisplayName', 'Current reduction (A)');
+grid on;
+xlabel('Hour of day');
+ylabel('Reduction');
+title('Furnace Creek 21st June: Reduction Relative to NOCT');
+legend('Location','best');
+xlim([0 23]);
