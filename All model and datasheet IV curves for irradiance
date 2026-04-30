@@ -1,0 +1,78 @@
+%% Plot all model and datasheet IV curves vs irradiance
+
+modelName = "SP150";
+
+% Conditions
+
+G_values = [200 400 600 800 1000];
+T_C = 20;
+Ns  = 72;
+
+assignin('base','T',T_C + 273.15);
+assignin('base','Ns',Ns);
+assignin('base','Rsh',1e7);
+assignin('base','Eg0',1.12);
+
+% Plot
+figure; hold on; grid on;
+
+for k = 1:length(G_values)
+
+    G = G_values(k);
+    filename = sprintf("SP150_%dG.xlsx", G);
+
+    assignin('base','G',G);
+
+    % Load datasheet IV curve
+    M = readmatrix(filename);
+
+    V_ds = M(:,1);
+    I_ds = M(:,2);
+
+    ok = isfinite(V_ds) & isfinite(I_ds);
+    V_ds = V_ds(ok);
+    I_ds = I_ds(ok);
+
+    [V_ds, idx] = sort(V_ds);
+    I_ds = I_ds(idx);
+
+    [V_ds, u] = unique(V_ds);
+    I_ds = I_ds(u);
+
+    % Run Simulink 
+
+    simOut = sim(modelName,'SrcWorkspace','base');
+
+    V = simOut.Vout;
+    I = simOut.Iout;
+
+    if isa(V,'timeseries'), V = V.Data; end
+    if isa(I,'timeseries'), I = I.Data; end
+
+    V = V(:);
+    I = I(:);
+
+    ok = isfinite(V) & isfinite(I);
+    V = V(ok);
+    I = I(ok);
+
+    [V, idx] = sort(V);
+    I = I(idx);
+
+    [V, u] = unique(V);
+    I = I(u);
+
+    % Plot datasheet and model
+
+    plot(V_ds, I_ds, '--', 'LineWidth', 2, 'DisplayName', sprintf('Datasheet %d W/m^2', G));
+    plot(V, I, '-', 'LineWidth', 2, 'DisplayName', sprintf('Model %d W/m^2', G));
+
+end
+
+xlabel('Voltage (V)');
+ylabel('Current (A)');
+title('SP150 IV Curves: Model vs Datasheet for All Irradiances');
+legend('Location','eastoutside');
+
+xlim([0 50]);
+ylim([0 6]);
